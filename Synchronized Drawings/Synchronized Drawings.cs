@@ -1,5 +1,6 @@
 ﻿using cAlgo.API;
 using cAlgo.API.Internals;
+using cAlgo.ChartObjectModels;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -11,7 +12,7 @@ namespace cAlgo
     [Indicator(IsOverlay = true, TimeZone = TimeZones.UTC, AccessRights = AccessRights.None)]
     public class SynchronizedDrawings : Indicator
     {
-        private static ConcurrentDictionary<string, IndicatorInstanceContainer<SynchronizedDrawings>> _indicatorInstances = new ConcurrentDictionary<string, IndicatorInstanceContainer<SynchronizedDrawings>>();
+        private static readonly ConcurrentDictionary<string, IndicatorInstanceContainer<SynchronizedDrawings>> _indicatorInstances = new ConcurrentDictionary<string, IndicatorInstanceContainer<SynchronizedDrawings>>();
 
         private static int _numberOfChartsToDraw;
 
@@ -91,8 +92,21 @@ namespace cAlgo
                 return;
             }
 
+            var chartObjectModels = new List<IChartObjectModel>(chartObjects.Length);
+
+            foreach (var chartObject in chartObjects)
+            {
+                var model = chartObject.GetObjectModel(-1);
+
+                if (string.IsNullOrWhiteSpace(model.Name))
+                {
+                    model.Name = string.Format("{0}_{1}", chartObject.GetHashCode(), _chartKey);
+                }
+
+                chartObjectModels.Add(model);
+            }
+
             var indicators = GetIndicators();
-            var chartObjectsWithNames = chartObjects.ToDictionary(chartObject => string.IsNullOrWhiteSpace(chartObject.Name) ? string.Format("{0}_{1}", chartObject.GetHashCode(), _chartKey) : chartObject.Name);
 
             Interlocked.CompareExchange(ref _numberOfChartsToDraw, indicators.Count, _numberOfChartsToDraw);
 
@@ -107,7 +121,9 @@ namespace cAlgo
             {
                 try
                 {
-                    indicatorKeyValuePair.Value.BeginInvokeOnMainThread(() => indicatorKeyValuePair.Value.UpdateObject(chartObjectsWithNames, operationType, chartInfo));
+                    var chartObjectModelsCopy = chartObjectModels.ToArray();
+
+                    indicatorKeyValuePair.Value.BeginInvokeOnMainThread(() => indicatorKeyValuePair.Value.UpdateObject(chartObjectModelsCopy, operationType, chartInfo));
                 }
                 catch (Exception)
                 {
@@ -120,24 +136,24 @@ namespace cAlgo
             }
         }
 
-        public void UpdateObject(Dictionary<string, ChartObject> chartObjectsWithNames, ChartObjectOperationType operationType, ChartInfo sourceChartInfo)
+        public void UpdateObject(IChartObjectModel[] chartObjectModels, ChartObjectOperationType operationType, ChartInfo sourceChartInfo)
         {
             var currentChartObjects = Chart.Objects.ToArray();
 
-            foreach (var chartObjectWithName in chartObjectsWithNames)
+            foreach (var chartObjectModel in chartObjectModels)
             {
-                var currentObject = currentChartObjects.FirstOrDefault(chartObject => chartObject.Name.Equals(chartObjectWithName.Key, StringComparison.Ordinal));
+                var currentObject = currentChartObjects.FirstOrDefault(chartObject => chartObject.Name.Equals(chartObjectModel.Name, StringComparison.Ordinal));
 
                 switch (operationType)
                 {
                     case ChartObjectOperationType.Added:
                         if (currentObject != null)
                         {
-                            UpdateObject(chartObjectWithName.Value, currentObject, sourceChartInfo);
+                            UpdateObject(chartObjectModel, currentObject, sourceChartInfo);
                         }
                         else
                         {
-                            AddObject(chartObjectWithName.Key, chartObjectWithName.Value, sourceChartInfo);
+                            AddObject(chartObjectModel, sourceChartInfo);
                         }
 
                         break;
@@ -153,11 +169,11 @@ namespace cAlgo
                     case ChartObjectOperationType.Updated:
                         if (currentObject != null)
                         {
-                            UpdateObject(chartObjectWithName.Value, currentObject, sourceChartInfo);
+                            UpdateObject(chartObjectModel, currentObject, sourceChartInfo);
                         }
                         else
                         {
-                            AddObject(chartObjectWithName.Key, chartObjectWithName.Value, sourceChartInfo);
+                            AddObject(chartObjectModel, sourceChartInfo);
                         }
 
                         break;
@@ -165,101 +181,104 @@ namespace cAlgo
             }
         }
 
-        private void AddObject(string name, ChartObject chartObject, ChartInfo sourceChartInfo)
+        private void AddObject(IChartObjectModel chartObjectModel, ChartInfo sourceChartInfo)
         {
             ChartObject result = null;
 
-            switch (chartObject.ObjectType)
+            switch (chartObjectModel.ObjectType)
             {
                 case ChartObjectType.AndrewsPitchfork:
-                    var andrewsPitchfork = chartObject as ChartAndrewsPitchfork;
+                    var andrewsPitchfork = chartObjectModel as ChartAndrewsPitchforkModel;
 
-                    result = Chart.DrawAndrewsPitchfork(name, andrewsPitchfork.Time1, GetY(andrewsPitchfork.Y1, sourceChartInfo), andrewsPitchfork.Time2, GetY(andrewsPitchfork.Y2, sourceChartInfo),
+                    result = Chart.DrawAndrewsPitchfork(chartObjectModel.Name, andrewsPitchfork.Time1, GetY(andrewsPitchfork.Y1, sourceChartInfo), andrewsPitchfork.Time2, GetY(andrewsPitchfork.Y2, sourceChartInfo),
                         andrewsPitchfork.Time3, GetY(andrewsPitchfork.Y3, sourceChartInfo), andrewsPitchfork.Color, andrewsPitchfork.Thickness, andrewsPitchfork.LineStyle);
 
                     break;
 
                 case ChartObjectType.Ellipse:
-                    var ellipse = chartObject as ChartEllipse;
+                    var ellipse = chartObjectModel as ChartEllipseModel;
 
-                    result = Chart.DrawEllipse(name, ellipse.Time1, GetY(ellipse.Y1, sourceChartInfo), ellipse.Time2, GetY(ellipse.Y2, sourceChartInfo), ellipse.Color);
+                    result = Chart.DrawEllipse(chartObjectModel.Name, ellipse.Time1, GetY(ellipse.Y1, sourceChartInfo), ellipse.Time2, GetY(ellipse.Y2, sourceChartInfo), ellipse.Color);
 
                     break;
 
                 case ChartObjectType.EquidistantChannel:
-                    var equidistantChannel = chartObject as ChartEquidistantChannel;
+                    var equidistantChannel = chartObjectModel as ChartEquidistantChannelModel;
 
-                    result = Chart.DrawEquidistantChannel(name, equidistantChannel.Time1, GetY(equidistantChannel.Y1, sourceChartInfo), equidistantChannel.Time2, GetY(equidistantChannel.Y2, sourceChartInfo),
-                        GetY(equidistantChannel.ChannelHeight, sourceChartInfo), equidistantChannel.Color);
+                    result = Chart.DrawEquidistantChannel(chartObjectModel.Name, equidistantChannel.Time1, GetY(equidistantChannel.Y1, sourceChartInfo), equidistantChannel.Time2, GetY(equidistantChannel.Y2, sourceChartInfo),
+                        GetYInTicks(equidistantChannel.ChannelHeight, sourceChartInfo), equidistantChannel.Color);
 
                     break;
 
                 case ChartObjectType.FibonacciExpansion:
-                    var fibonacciExpansion = chartObject as ChartFibonacciExpansion;
+                    var fibonacciExpansion = chartObjectModel as ChartFibonacciExpansionModel;
 
-                    result = Chart.DrawFibonacciExpansion(name, fibonacciExpansion.Time1, GetY(fibonacciExpansion.Y1, sourceChartInfo), fibonacciExpansion.Time2, GetY(fibonacciExpansion.Y2, sourceChartInfo),
+                    result = Chart.DrawFibonacciExpansion(chartObjectModel.Name, fibonacciExpansion.Time1, GetY(fibonacciExpansion.Y1, sourceChartInfo), fibonacciExpansion.Time2, GetY(fibonacciExpansion.Y2, sourceChartInfo),
                         fibonacciExpansion.Time3, GetY(fibonacciExpansion.Y3, sourceChartInfo), fibonacciExpansion.Color);
 
                     break;
 
                 case ChartObjectType.FibonacciFan:
-                    var fibonacciFan = chartObject as ChartFibonacciFan;
+                    var fibonacciFan = chartObjectModel as ChartFibonacciFanModel;
 
-                    result = Chart.DrawFibonacciFan(name, fibonacciFan.Time1, GetY(fibonacciFan.Y1, sourceChartInfo), fibonacciFan.Time2, GetY(fibonacciFan.Y2, sourceChartInfo), fibonacciFan.Color);
+                    result = Chart.DrawFibonacciFan(chartObjectModel.Name, fibonacciFan.Time1, GetY(fibonacciFan.Y1, sourceChartInfo), fibonacciFan.Time2, GetY(fibonacciFan.Y2, sourceChartInfo), fibonacciFan.Color);
 
                     break;
 
                 case ChartObjectType.FibonacciRetracement:
-                    var fibonacciRetracement = chartObject as ChartFibonacciRetracement;
+                    var fibonacciRetracement = chartObjectModel as ChartFibonacciRetracementModel;
 
-                    result = Chart.DrawFibonacciRetracement(name, fibonacciRetracement.Time1, GetY(fibonacciRetracement.Y1, sourceChartInfo), fibonacciRetracement.Time2, GetY(fibonacciRetracement.Y2, sourceChartInfo),
+                    result = Chart.DrawFibonacciRetracement(chartObjectModel.Name, fibonacciRetracement.Time1, GetY(fibonacciRetracement.Y1, sourceChartInfo), fibonacciRetracement.Time2, GetY(fibonacciRetracement.Y2, sourceChartInfo),
                         fibonacciRetracement.Color);
 
                     break;
 
                 case ChartObjectType.HorizontalLine:
-                    var horizontalLine = chartObject as ChartHorizontalLine;
+                    var horizontalLine = chartObjectModel as ChartHorizontalLineModel;
 
-                    result = Chart.DrawHorizontalLine(name, GetY(horizontalLine.Y, sourceChartInfo), horizontalLine.Color, horizontalLine.Thickness, horizontalLine.LineStyle);
+                    result = Chart.DrawHorizontalLine(chartObjectModel.Name, GetY(horizontalLine.Y, sourceChartInfo), horizontalLine.Color, horizontalLine.Thickness, horizontalLine.LineStyle);
 
                     break;
 
                 case ChartObjectType.Icon:
-                    var icon = chartObject as ChartIcon;
+                    var icon = chartObjectModel as ChartIconModel;
 
-                    result = Chart.DrawIcon(name, icon.IconType, icon.Time, GetY(icon.Y, sourceChartInfo), icon.Color);
+                    result = Chart.DrawIcon(chartObjectModel.Name, icon.IconType, icon.Time, GetY(icon.Y, sourceChartInfo), icon.Color);
 
                     break;
 
                 case ChartObjectType.Rectangle:
-                    var rectangle = chartObject as ChartRectangle;
+                    var rectangle = chartObjectModel as ChartRectangleModel;
 
-                    result = Chart.DrawRectangle(name, rectangle.Time1, GetY(rectangle.Y1, sourceChartInfo), rectangle.Time2, GetY(rectangle.Y2, sourceChartInfo), rectangle.Color);
+                    result = Chart.DrawRectangle(chartObjectModel.Name, rectangle.Time1, GetY(rectangle.Y1, sourceChartInfo), rectangle.Time2, GetY(rectangle.Y2, sourceChartInfo), rectangle.Color);
 
                     break;
 
                 case ChartObjectType.StaticText:
-                    var staticText = chartObject as ChartStaticText;
+                    var staticText = chartObjectModel as ChartStaticTextModel;
 
-                    result = Chart.DrawStaticText(name, staticText.Text, staticText.VerticalAlignment, staticText.HorizontalAlignment, staticText.Color);
+                    result = Chart.DrawStaticText(chartObjectModel.Name, staticText.Text, staticText.VerticalAlignment, staticText.HorizontalAlignment, staticText.Color);
 
                     break;
 
                 case ChartObjectType.Text:
-                    var text = chartObject as ChartText;
+                    var text = chartObjectModel as ChartTextModel;
 
-                    var currentChartText = Chart.DrawText(name, text.Text, text.Time, GetY(text.Y, sourceChartInfo), text.Color);
+                    var currentChartText = Chart.DrawText(chartObjectModel.Name, text.Text, text.Time, GetY(text.Y, sourceChartInfo), text.Color);
 
                     currentChartText.FontSize = text.FontSize;
+                    currentChartText.IsBold = text.IsBold;
+                    currentChartText.IsItalic = text.IsItalic;
+                    currentChartText.IsUnderlined = text.IsUnderlined;
 
                     result = currentChartText;
 
                     break;
 
                 case ChartObjectType.TrendLine:
-                    var trendLine = chartObject as ChartTrendLine;
+                    var trendLine = chartObjectModel as ChartTrendLineModel;
 
-                    var currentChartTrendLine = Chart.DrawTrendLine(name, trendLine.Time1, GetY(trendLine.Y1, sourceChartInfo), trendLine.Time2, GetY(trendLine.Y2, sourceChartInfo), trendLine.Color, trendLine.Thickness, trendLine.LineStyle);
+                    var currentChartTrendLine = Chart.DrawTrendLine(chartObjectModel.Name, trendLine.Time1, GetY(trendLine.Y1, sourceChartInfo), trendLine.Time2, GetY(trendLine.Y2, sourceChartInfo), trendLine.Color, trendLine.Thickness, trendLine.LineStyle);
 
                     currentChartTrendLine.ExtendToInfinity = trendLine.ExtendToInfinity;
                     currentChartTrendLine.ShowAngle = trendLine.ShowAngle;
@@ -269,32 +288,32 @@ namespace cAlgo
                     break;
 
                 case ChartObjectType.Triangle:
-                    var triangle = chartObject as ChartTriangle;
+                    var triangle = chartObjectModel as ChartTriangleModel;
 
-                    result = Chart.DrawTriangle(name, triangle.Time1, GetY(triangle.Y1, sourceChartInfo), triangle.Time2, GetY(triangle.Y2, sourceChartInfo), triangle.Time3, GetY(triangle.Y3, sourceChartInfo), triangle.Color);
+                    result = Chart.DrawTriangle(chartObjectModel.Name, triangle.Time1, GetY(triangle.Y1, sourceChartInfo), triangle.Time2, GetY(triangle.Y2, sourceChartInfo), triangle.Time3, GetY(triangle.Y3, sourceChartInfo), triangle.Color);
 
                     break;
 
                 case ChartObjectType.VerticalLine:
-                    var verticalLine = chartObject as ChartVerticalLine;
+                    var verticalLine = chartObjectModel as ChartVerticalLineModel;
 
-                    result = Chart.DrawVerticalLine(name, verticalLine.Time, verticalLine.Color, verticalLine.Thickness, verticalLine.LineStyle);
+                    result = Chart.DrawVerticalLine(chartObjectModel.Name, verticalLine.Time, verticalLine.Color, verticalLine.Thickness, verticalLine.LineStyle);
 
                     break;
             }
 
-            result.Comment = chartObject.Comment;
-            result.IsLocked = chartObject.IsLocked;
-            result.IsHidden = chartObject.IsHidden;
+            result.Comment = chartObjectModel.Comment;
+            result.IsLocked = chartObjectModel.IsLocked;
+            result.IsHidden = chartObjectModel.IsHidden;
 
-            if (chartObject.ObjectType != ChartObjectType.StaticText)
+            if (chartObjectModel.ObjectType != ChartObjectType.StaticText)
             {
-                result.IsInteractive = chartObject.IsInteractive;
+                result.IsInteractive = chartObjectModel.IsInteractive;
             }
 
             if (result is ChartShape)
             {
-                var chartObjectShape = chartObject as ChartShape;
+                var chartObjectShape = chartObjectModel as ChartShapeModel;
                 var resultShape = result as ChartShape;
 
                 resultShape.LineStyle = chartObjectShape.LineStyle;
@@ -304,19 +323,19 @@ namespace cAlgo
 
             if (result is ChartFibonacciBase)
             {
-                var chartObjectFibonacciBase = chartObject as ChartFibonacciBase;
+                var chartObjectFibonacciBase = chartObjectModel as ChartFibonacciBaseModel;
                 var resultFibonacciBase = result as ChartFibonacciBase;
 
                 resultFibonacciBase.DisplayPrices = chartObjectFibonacciBase.DisplayPrices;
             }
         }
 
-        private void UpdateObject(ChartObject otherChartObject, ChartObject currentChartObject, ChartInfo sourceChartInfo)
+        private void UpdateObject(IChartObjectModel chartObjectModel, ChartObject currentChartObject, ChartInfo sourceChartInfo)
         {
-            switch (otherChartObject.ObjectType)
+            switch (chartObjectModel.ObjectType)
             {
                 case ChartObjectType.AndrewsPitchfork:
-                    var otherChartAndrewsPitchfork = otherChartObject as ChartAndrewsPitchfork;
+                    var otherChartAndrewsPitchfork = chartObjectModel as ChartAndrewsPitchforkModel;
                     var currentChartAndrewsPitchfork = currentChartObject as ChartAndrewsPitchfork;
 
                     currentChartAndrewsPitchfork.Time1 = otherChartAndrewsPitchfork.Time1;
@@ -334,7 +353,7 @@ namespace cAlgo
                     break;
 
                 case ChartObjectType.Ellipse:
-                    var otherChartEllipse = otherChartObject as ChartEllipse;
+                    var otherChartEllipse = chartObjectModel as ChartEllipseModel;
                     var currentChartEllipse = currentChartObject as ChartEllipse;
 
                     currentChartEllipse.Time1 = otherChartEllipse.Time1;
@@ -348,7 +367,7 @@ namespace cAlgo
                     break;
 
                 case ChartObjectType.EquidistantChannel:
-                    var otherChartEquidistantChanne = otherChartObject as ChartEquidistantChannel;
+                    var otherChartEquidistantChanne = chartObjectModel as ChartEquidistantChannelModel;
                     var currentChartEquidistantChanne = currentChartObject as ChartEquidistantChannel;
 
                     currentChartEquidistantChanne.Time1 = otherChartEquidistantChanne.Time1;
@@ -359,12 +378,12 @@ namespace cAlgo
 
                     currentChartEquidistantChanne.Color = otherChartEquidistantChanne.Color;
 
-                    currentChartEquidistantChanne.ChannelHeight = otherChartEquidistantChanne.ChannelHeight;
+                    currentChartEquidistantChanne.ChannelHeight = GetYInTicks(otherChartEquidistantChanne.ChannelHeight, sourceChartInfo);
 
                     break;
 
                 case ChartObjectType.FibonacciExpansion:
-                    var otherChartFibonacciExpansion = otherChartObject as ChartFibonacciExpansion;
+                    var otherChartFibonacciExpansion = chartObjectModel as ChartFibonacciExpansionModel;
                     var currentChartFibonacciExpansion = currentChartObject as ChartFibonacciExpansion;
 
                     currentChartFibonacciExpansion.Time1 = otherChartFibonacciExpansion.Time1;
@@ -384,7 +403,7 @@ namespace cAlgo
                     break;
 
                 case ChartObjectType.FibonacciFan:
-                    var otherChartFibonacciFan = otherChartObject as ChartFibonacciFan;
+                    var otherChartFibonacciFan = chartObjectModel as ChartFibonacciFanModel;
                     var currentChartFibonacciFan = currentChartObject as ChartFibonacciFan;
 
                     currentChartFibonacciFan.Time1 = otherChartFibonacciFan.Time1;
@@ -402,7 +421,7 @@ namespace cAlgo
                     break;
 
                 case ChartObjectType.FibonacciRetracement:
-                    var otherChartFibonacciRetracement = otherChartObject as ChartFibonacciRetracement;
+                    var otherChartFibonacciRetracement = chartObjectModel as ChartFibonacciRetracementModel;
                     var currentChartFibonacciRetracement = currentChartObject as ChartFibonacciRetracement;
 
                     currentChartFibonacciRetracement.Time1 = otherChartFibonacciRetracement.Time1;
@@ -420,7 +439,7 @@ namespace cAlgo
                     break;
 
                 case ChartObjectType.HorizontalLine:
-                    var otherChartHorizontalLine = otherChartObject as ChartHorizontalLine;
+                    var otherChartHorizontalLine = chartObjectModel as ChartHorizontalLineModel;
                     var currentChartHorizontalLine = currentChartObject as ChartHorizontalLine;
 
                     currentChartHorizontalLine.Y = GetY(otherChartHorizontalLine.Y, sourceChartInfo);
@@ -431,7 +450,7 @@ namespace cAlgo
                     break;
 
                 case ChartObjectType.Icon:
-                    var otherChartIcon = otherChartObject as ChartIcon;
+                    var otherChartIcon = chartObjectModel as ChartIconModel;
                     var currentChartIcon = currentChartObject as ChartIcon;
 
                     currentChartIcon.IconType = otherChartIcon.IconType;
@@ -442,7 +461,7 @@ namespace cAlgo
                     break;
 
                 case ChartObjectType.Rectangle:
-                    var otherChartRectangle = otherChartObject as ChartRectangle;
+                    var otherChartRectangle = chartObjectModel as ChartRectangleModel;
                     var currentChartRectangle = currentChartObject as ChartRectangle;
 
                     currentChartRectangle.Time1 = otherChartRectangle.Time1;
@@ -458,7 +477,7 @@ namespace cAlgo
                     break;
 
                 case ChartObjectType.StaticText:
-                    var otherChartStaticText = otherChartObject as ChartStaticText;
+                    var otherChartStaticText = chartObjectModel as ChartStaticTextModel;
                     var currentChartStaticText = currentChartObject as ChartStaticText;
 
                     currentChartStaticText.Text = otherChartStaticText.Text;
@@ -469,7 +488,7 @@ namespace cAlgo
                     break;
 
                 case ChartObjectType.Text:
-                    var otherChartText = otherChartObject as ChartText;
+                    var otherChartText = chartObjectModel as ChartTextModel;
                     var currentChartText = currentChartObject as ChartText;
 
                     currentChartText.Text = otherChartText.Text;
@@ -477,11 +496,14 @@ namespace cAlgo
                     currentChartText.Y = GetY(otherChartText.Y, sourceChartInfo);
                     currentChartText.Color = otherChartText.Color;
                     currentChartText.FontSize = otherChartText.FontSize;
+                    currentChartText.IsBold = otherChartText.IsBold;
+                    currentChartText.IsItalic = otherChartText.IsItalic;
+                    currentChartText.IsUnderlined = otherChartText.IsUnderlined;
 
                     break;
 
                 case ChartObjectType.TrendLine:
-                    var otherChartTrendLine = otherChartObject as ChartTrendLine;
+                    var otherChartTrendLine = chartObjectModel as ChartTrendLineModel;
                     var currentChartTrendLine = currentChartObject as ChartTrendLine;
 
                     currentChartTrendLine.Time1 = otherChartTrendLine.Time1;
@@ -500,7 +522,7 @@ namespace cAlgo
                     break;
 
                 case ChartObjectType.Triangle:
-                    var otherChartTriangle = otherChartObject as ChartTriangle;
+                    var otherChartTriangle = chartObjectModel as ChartTriangleModel;
                     var currentChartTriangle = currentChartObject as ChartTriangle;
 
                     currentChartTriangle.Time1 = otherChartTriangle.Time1;
@@ -518,7 +540,7 @@ namespace cAlgo
                     break;
 
                 case ChartObjectType.VerticalLine:
-                    var otherChartVerticalLine = otherChartObject as ChartVerticalLine;
+                    var otherChartVerticalLine = chartObjectModel as ChartVerticalLineModel;
                     var currentChartVerticalLine = currentChartObject as ChartVerticalLine;
 
                     currentChartVerticalLine.Time = otherChartVerticalLine.Time;
@@ -529,18 +551,18 @@ namespace cAlgo
                     break;
             }
 
-            currentChartObject.Comment = otherChartObject.Comment;
-            currentChartObject.IsLocked = otherChartObject.IsLocked;
-            currentChartObject.IsHidden = otherChartObject.IsHidden;
+            currentChartObject.Comment = chartObjectModel.Comment;
+            currentChartObject.IsLocked = chartObjectModel.IsLocked;
+            currentChartObject.IsHidden = chartObjectModel.IsHidden;
 
             if (currentChartObject.ObjectType != ChartObjectType.StaticText)
             {
-                currentChartObject.IsInteractive = otherChartObject.IsInteractive;
+                currentChartObject.IsInteractive = chartObjectModel.IsInteractive;
             }
 
             if (currentChartObject is ChartShape)
             {
-                var otherShape = otherChartObject as ChartShape;
+                var otherShape = chartObjectModel as ChartShapeModel;
                 var currentShape = currentChartObject as ChartShape;
 
                 currentShape.LineStyle = otherShape.LineStyle;
@@ -559,6 +581,21 @@ namespace cAlgo
             var topToBottomDiff = sourceChartInfo.TopY - sourceChartInfo.BottomY;
             var diff = absoluteY - sourceChartInfo.BottomY;
             var percent = diff / topToBottomDiff;
+
+            var chartTopToBottomDiff = Chart.TopY - Chart.BottomY;
+
+            return Chart.BottomY + (chartTopToBottomDiff * percent);
+        }
+
+        private double GetYInTicks(double absoluteY, ChartInfo sourceChartInfo)
+        {
+            if (YAxisType == YAxisType.Absolute || sourceChartInfo.SymbolName.Equals(SymbolName, StringComparison.Ordinal))
+            {
+                return absoluteY;
+            }
+
+            var topToBottomDiff = sourceChartInfo.TopY - sourceChartInfo.BottomY;
+            var percent = absoluteY / topToBottomDiff;
 
             var chartTopToBottomDiff = Chart.TopY - Chart.BottomY;
 

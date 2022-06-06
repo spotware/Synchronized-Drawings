@@ -46,6 +46,26 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="ChartObjectModels\ChartAndrewsPitchforkModel.cs" />
+    <Compile Include="ChartObjectModels\ChartEllipseModel.cs" />
+    <Compile Include="ChartObjectModels\ChartEquidistantChannelModel.cs" />
+    <Compile Include="ChartObjectModels\ChartFibonacciBaseModel.cs" />
+    <Compile Include="ChartObjectModels\ChartFibonacciExpansionModel.cs" />
+    <Compile Include="ChartObjectModels\ChartFibonacciFanModel.cs" />
+    <Compile Include="ChartObjectModels\ChartFibonacciRetracementModel.cs" />
+    <Compile Include="ChartObjectModels\ChartHorizontalLineModel.cs" />
+    <Compile Include="ChartObjectModels\ChartIconModel.cs" />
+    <Compile Include="ChartObjectModels\ChartObjectBaseModel.cs" />
+    <Compile Include="ChartObjectModels\ChartObjectToModel.cs" />
+    <Compile Include="ChartObjectModels\ChartRectangleModel.cs" />
+    <Compile Include="ChartObjectModels\ChartShapeModel.cs" />
+    <Compile Include="ChartObjectModels\ChartStaticTextModel.cs" />
+    <Compile Include="ChartObjectModels\ChartTextModel.cs" />
+    <Compile Include="ChartObjectModels\ChartTrendLineModel.cs" />
+    <Compile Include="ChartObjectModels\ChartTriangleModel.cs" />
+    <Compile Include="ChartObjectModels\ChartVerticalLineModel.cs" />
+    <Compile Include="ChartObjectModels\FibonacciLevelModel.cs" />
+    <Compile Include="ChartObjectModels\IChartObjectModel.cs" />
     <Compile Include="Synchronized Drawings.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
