@@ -1,5 +1,4 @@
 ﻿using cAlgo.API;
-using cAlgo.API.Internals;
 using cAlgo.ChartObjectModels;
 using System;
 using System.Collections.Concurrent;
@@ -14,9 +13,9 @@ namespace cAlgo
     {
         private static readonly ConcurrentDictionary<string, IndicatorInstanceContainer<SynchronizedDrawings>> _indicatorInstances = new ConcurrentDictionary<string, IndicatorInstanceContainer<SynchronizedDrawings>>();
 
-        private static int _numberOfChartsToDraw;
-
         private string _chartKey;
+
+        private DateTime _lastChartObjectsUpdateTime;
 
         [Parameter("Mode", DefaultValue = Mode.All, Group = "General")]
         public Mode Mode { get; set; }
@@ -26,6 +25,8 @@ namespace cAlgo
 
         [Parameter("Object Type", DefaultValue = ObjectType.Interactive, Group = "General")]
         public ObjectType ObjectType { get; set; }
+
+        public int IsInSync;
 
         protected override void Initialize()
         {
@@ -49,27 +50,46 @@ namespace cAlgo
 
         private void Chart_ObjectsUpdated(ChartObjectsUpdatedEventArgs obj)
         {
+            if (IsInSync > 0 || Server.TimeInUtc - _lastChartObjectsUpdateTime < TimeSpan.FromMilliseconds(100)) return;
+
+            _lastChartObjectsUpdateTime = Server.TimeInUtc;
+
             var objects = obj.ChartObjects.Where(chartObject => IsObjectValid(chartObject)).ToArray();
 
-            SyncObjects(objects, ChartObjectOperationType.Updated);
+            if (objects.Length > 0)
+            {
+                SyncObjects(objects, ChartObjectOperationType.Updated);
+            }
         }
 
         private void Chart_ObjectsRemoved(ChartObjectsRemovedEventArgs obj)
         {
+            if (IsInSync > 0) return;
+
             var objects = obj.ChartObjects.Where(chartObject => IsObjectValid(chartObject)).ToArray();
 
-            SyncObjects(objects, ChartObjectOperationType.Removed);
+            if (objects.Length > 0)
+            {
+                SyncObjects(objects, ChartObjectOperationType.Removed);
+            }
         }
 
         private void Chart_ObjectsAdded(ChartObjectsAddedEventArgs obj)
         {
+            if (IsInSync > 0) return;
+
             var objects = obj.ChartObjects.Where(chartObject => IsObjectValid(chartObject)).ToArray();
 
-            SyncObjects(objects, ChartObjectOperationType.Added);
+            if (objects.Length > 0)
+            {
+                SyncObjects(objects, ChartObjectOperationType.Added);
+            }
         }
 
         private bool IsObjectValid(ChartObject chartObject)
         {
+            if (chartObject.ObjectType == ChartObjectType.Drawing) return false;
+
             switch (ObjectType)
             {
                 case ObjectType.Interactive:
@@ -85,13 +105,6 @@ namespace cAlgo
 
         private void SyncObjects(ChartObject[] chartObjects, ChartObjectOperationType operationType)
         {
-            if (_numberOfChartsToDraw > 0)
-            {
-                Interlocked.Decrement(ref _numberOfChartsToDraw);
-
-                return;
-            }
-
             var chartObjectModels = new List<IChartObjectModel>(chartObjects.Length);
 
             foreach (var chartObject in chartObjects)
@@ -108,8 +121,6 @@ namespace cAlgo
 
             var indicators = GetIndicators();
 
-            Interlocked.CompareExchange(ref _numberOfChartsToDraw, indicators.Count, _numberOfChartsToDraw);
-
             var chartInfo = new ChartInfo
             {
                 TopY = Chart.TopY,
@@ -123,61 +134,68 @@ namespace cAlgo
                 {
                     var chartObjectModelsCopy = chartObjectModels.ToArray();
 
-                    indicatorKeyValuePair.Value.BeginInvokeOnMainThread(() => indicatorKeyValuePair.Value.UpdateObject(chartObjectModelsCopy, operationType, chartInfo));
+                    Interlocked.Exchange(ref indicatorKeyValuePair.Value.IsInSync, 1);
+
+                    indicatorKeyValuePair.Value.BeginInvokeOnMainThread(() => indicatorKeyValuePair.Value.UpdateObjects(chartObjectModelsCopy, operationType, chartInfo));
                 }
                 catch (Exception)
                 {
                     IndicatorInstanceContainer<SynchronizedDrawings> instanceContainer;
 
                     _indicatorInstances.TryRemove(indicatorKeyValuePair.Key, out instanceContainer);
-
-                    Interlocked.Decrement(ref _numberOfChartsToDraw);
                 }
             }
         }
 
-        public void UpdateObject(IChartObjectModel[] chartObjectModels, ChartObjectOperationType operationType, ChartInfo sourceChartInfo)
+        public void UpdateObjects(IChartObjectModel[] chartObjectModels, ChartObjectOperationType operationType, ChartInfo sourceChartInfo)
         {
-            var currentChartObjects = Chart.Objects.ToArray();
-
-            foreach (var chartObjectModel in chartObjectModels)
+            try
             {
-                var currentObject = currentChartObjects.FirstOrDefault(chartObject => chartObject.Name.Equals(chartObjectModel.Name, StringComparison.Ordinal));
+                var currentChartObjects = Chart.Objects.ToArray();
 
-                switch (operationType)
+                foreach (var chartObjectModel in chartObjectModels)
                 {
-                    case ChartObjectOperationType.Added:
-                        if (currentObject != null)
-                        {
-                            UpdateObject(chartObjectModel, currentObject, sourceChartInfo);
-                        }
-                        else
-                        {
-                            AddObject(chartObjectModel, sourceChartInfo);
-                        }
+                    var currentObject = currentChartObjects.FirstOrDefault(chartObject => chartObject.Name.Equals(chartObjectModel.Name, StringComparison.Ordinal));
 
-                        break;
+                    switch (operationType)
+                    {
+                        case ChartObjectOperationType.Added:
+                            if (currentObject != null)
+                            {
+                                UpdateObject(chartObjectModel, currentObject, sourceChartInfo);
+                            }
+                            else
+                            {
+                                AddObject(chartObjectModel, sourceChartInfo);
+                            }
 
-                    case ChartObjectOperationType.Removed:
-                        if (currentObject != null)
-                        {
-                            Chart.RemoveObject(currentObject.Name);
-                        }
+                            break;
 
-                        break;
+                        case ChartObjectOperationType.Removed:
+                            if (currentObject != null)
+                            {
+                                Chart.RemoveObject(currentObject.Name);
+                            }
 
-                    case ChartObjectOperationType.Updated:
-                        if (currentObject != null)
-                        {
-                            UpdateObject(chartObjectModel, currentObject, sourceChartInfo);
-                        }
-                        else
-                        {
-                            AddObject(chartObjectModel, sourceChartInfo);
-                        }
+                            break;
 
-                        break;
+                        case ChartObjectOperationType.Updated:
+                            if (currentObject != null)
+                            {
+                                UpdateObject(chartObjectModel, currentObject, sourceChartInfo);
+                            }
+                            else
+                            {
+                                AddObject(chartObjectModel, sourceChartInfo);
+                            }
+
+                            break;
+                    }
                 }
+            }
+            finally
+            {
+                Interlocked.Exchange(ref IsInSync, 0);
             }
         }
 
@@ -205,8 +223,13 @@ namespace cAlgo
                 case ChartObjectType.EquidistantChannel:
                     var equidistantChannel = chartObjectModel as ChartEquidistantChannelModel;
 
-                    result = Chart.DrawEquidistantChannel(chartObjectModel.Name, equidistantChannel.Time1, GetY(equidistantChannel.Y1, sourceChartInfo), equidistantChannel.Time2, GetY(equidistantChannel.Y2, sourceChartInfo),
+                    var currentEquidistantChannel = Chart.DrawEquidistantChannel(chartObjectModel.Name, equidistantChannel.Time1, GetY(equidistantChannel.Y1, sourceChartInfo), equidistantChannel.Time2, GetY(equidistantChannel.Y2, sourceChartInfo),
                         GetYInTicks(equidistantChannel.ChannelHeight, sourceChartInfo), equidistantChannel.Color);
+
+                    currentEquidistantChannel.ShowAngle = equidistantChannel.ShowAngle;
+                    currentEquidistantChannel.ExtendToInfinity = equidistantChannel.ExtendToInfinity;
+
+                    result = currentEquidistantChannel;
 
                     break;
 
@@ -379,6 +402,9 @@ namespace cAlgo
                     currentChartEquidistantChanne.Color = otherChartEquidistantChanne.Color;
 
                     currentChartEquidistantChanne.ChannelHeight = GetYInTicks(otherChartEquidistantChanne.ChannelHeight, sourceChartInfo);
+
+                    currentChartEquidistantChanne.ShowAngle = otherChartEquidistantChanne.ShowAngle;
+                    currentChartEquidistantChanne.ExtendToInfinity = otherChartEquidistantChanne.ExtendToInfinity;
 
                     break;
 
@@ -599,7 +625,7 @@ namespace cAlgo
 
             var chartTopToBottomDiff = Chart.TopY - Chart.BottomY;
 
-            return Chart.BottomY + (chartTopToBottomDiff * percent);
+            return chartTopToBottomDiff * percent;
         }
 
         public override void Calculate(int index)
